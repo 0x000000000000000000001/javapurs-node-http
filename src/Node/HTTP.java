@@ -64,6 +64,7 @@
             try {
                 java.net.Socket connection = new java.net.Socket();
                 connection.connect(new java.net.InetSocketAddress(host, port), 10000);
+                connection.setSoTimeout(15000);
                 java.io.OutputStream out = connection.getOutputStream();
                 StringBuilder head = new StringBuilder();
                 head.append(method).append(' ').append(path).append(" HTTP/1.1\r\n");
