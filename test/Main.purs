@@ -4,9 +4,9 @@ import Prelude
 
 import Data.Either (Either(..))
 import Data.Foldable (foldMap, for_)
-import Data.Maybe (fromMaybe)
+import Data.Maybe (Maybe(..), fromMaybe)
 import Effect (Effect)
-import Effect.Aff (launchAff_, makeAff, nonCanceler)
+import Effect.Aff (Aff, launchAff_, makeAff, nonCanceler)
 import Effect.Class (liftEffect)
 import Effect.Console (log, logShow)
 import Effect.Uncurried (EffectFn2)
@@ -26,6 +26,7 @@ import Node.HTTPS as HTTPS
 import Node.Net.Server (listenTcp)
 import Node.Net.Server as NetServer
 import Node.Net.Socket as Socket
+import Node.Process (lookupEnv)
 import Node.Stream (Writable, end, pipe)
 import Node.Stream as Stream
 import Partial.Unsafe (unsafeCrashWith)
@@ -36,12 +37,18 @@ foreign import setTimeoutImpl :: EffectFn2 Int (Effect Unit) Unit
 foreign import stdout :: forall r. Writable r
 
 main :: Effect Unit
-main = do
-  testBasic
-  testUpgrade
-  testHttpsServer
-  testHttps
-  testCookies
+main = launchAff_ testHttp
+
+testHttp :: Aff Unit
+testHttp = do
+  liftEffect do
+    testBasic
+    testHttpsServer
+  external <- liftEffect $ lookupEnv "JAVAPURS_HTTP_EXTERNAL"
+  when (external == Just "1") $ liftEffect do
+    testHttps
+    testCookies
+  testUpgradeAff
 
 killServer :: forall transmissionType. HttpServer' transmissionType -> Effect Unit
 killServer s = do
@@ -198,7 +205,10 @@ logResponse response = void do
   pipe (IM.toReadable response) stdout
 
 testUpgrade :: Effect Unit
-testUpgrade = launchAff_ do
+testUpgrade = launchAff_ testUpgradeAff
+
+testUpgradeAff :: Aff Unit
+testUpgradeAff = do
   server <- liftEffect HTTP.createServer
   let netServer = Server.toNetServer server
   waitUntilListening netServer

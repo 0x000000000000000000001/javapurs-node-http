@@ -7,6 +7,7 @@
         public int statusCode = 200;
         public String statusMessage = "OK";
         public boolean complete = true;
+        public __M$Node_Net_Socket.TcpSocket socket;
         public final java.util.Map<String, Object> headers = new java.util.LinkedHashMap<>();
     }
 
@@ -69,11 +70,14 @@
                 StringBuilder head = new StringBuilder();
                 head.append(method).append(' ').append(path).append(" HTTP/1.1\r\n");
                 head.append("Host: ").append(host).append(':').append(port).append("\r\n");
+                boolean hasConnection = false;
                 for (java.util.Map.Entry<String, Object> entry : headers.entrySet()) {
                     head.append(entry.getKey()).append(": ").append(entry.getValue()).append("\r\n");
+                    if (entry.getKey().equalsIgnoreCase("connection")) hasConnection = true;
                 }
                 head.append("Content-Length: ").append(data.length).append("\r\n");
-                head.append("Connection: close\r\n\r\n");
+                if (!hasConnection) head.append("Connection: close\r\n");
+                head.append("\r\n");
                 out.write(head.toString().getBytes(java.nio.charset.StandardCharsets.ISO_8859_1));
                 out.write(data);
                 out.flush();
@@ -91,16 +95,24 @@
                 while ((line = __readLine(in)) != null && !line.isEmpty()) {
                     int colon = line.indexOf(':');
                     if (colon > 0) {
-                        String name = line.substring(0, colon).trim();
+                        String name = line.substring(0, colon).trim().toLowerCase();
                         String value = line.substring(colon + 1).trim();
                         response.headers.put(name, value);
-                        if (name.equalsIgnoreCase("content-length")) contentLength = Integer.parseInt(value);
+                        if (name.equals("content-length")) contentLength = Integer.parseInt(value);
                     }
                 }
-                response.data = contentLength >= 0
-                    ? in.readNBytes(contentLength)
-                    : in.readAllBytes();
-                connection.close();
+                __M$Node_Net_Socket.TcpSocket responseSocket = new __M$Node_Net_Socket.TcpSocket();
+                responseSocket.socket = connection;
+                responseSocket.connected = true;
+                response.socket = responseSocket;
+                boolean upgraded = response.statusCode == 101 ||
+                    response.headers.keySet().stream().anyMatch(name -> name.equalsIgnoreCase("upgrade"));
+                if (!upgraded) {
+                    response.data = contentLength >= 0
+                        ? in.readNBytes(contentLength)
+                        : in.readAllBytes();
+                    connection.close();
+                }
                 fire("response", response);
             } catch (Throwable failure) {
                 fire("error", new RuntimeException(String.valueOf(failure)));
@@ -131,13 +143,21 @@
                     while ((line = __readLine(in)) != null && !line.isEmpty()) {
                         int colon = line.indexOf(':');
                         if (colon > 0) {
-                            String name = line.substring(0, colon).trim();
+                            String name = line.substring(0, colon).trim().toLowerCase();
                             String value = line.substring(colon + 1).trim();
                             request.headers.put(name, value);
-                            if (name.equalsIgnoreCase("content-length")) contentLength = Integer.parseInt(value);
+                            if (name.equals("content-length")) contentLength = Integer.parseInt(value);
                         }
                     }
                     if (contentLength > 0) request.data = in.readNBytes(contentLength);
+
+                    boolean upgrade = request.headers.containsKey("upgrade");
+                    boolean connectionUpgrade = String.valueOf(request.headers.getOrDefault("connection", ""))
+                        .toLowerCase().contains("upgrade");
+                    if (upgrade && connectionUpgrade) {
+                        fire("upgrade", request, socket, __M$Node_Buffer.__wrap(new byte[0]));
+                        return;
+                    }
 
                     ServerResponseValue response = new ServerResponseValue();
                     response.socket = socket;

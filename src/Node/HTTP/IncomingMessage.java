@@ -33,7 +33,7 @@
     public static Object rawTrailersImpl = (java.util.function.Function<Object, Object>) (message) -> null;
 
     public static Object socketImpl = (java.util.function.Function<Object, Object>) (message) ->
-        (java.util.function.Supplier<Object>) () -> null;
+        (java.util.function.Supplier<Object>) () -> ((__M$Node_HTTP.IncomingMessageValue) message).socket;
 
     public static Object statusCode = (java.util.function.Function<Object, Object>) (message) ->
         ((__M$Node_HTTP.IncomingMessageValue) message).statusCode;
