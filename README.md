@@ -1,5 +1,9 @@
 # purescript-node-http
 
+Java port of the PureScript `node-http` package. See the
+[port maintenance guide](../javapurs/docs/port-maintenance.md)
+for source layout, local dependency selection and JVM validation.
+
 ## JVM tests
 
 `./bin/test` delegates to the [common runner](../javapurs/docs/testing.md#port-particulier) as `node-http`. The wrapper awaits `testHttp`, covering local HTTP/HTTPS servers, the 426 upgrade response and the WebSocket 101 handshake with its client socket. The two upstream external-URL checks are opt-in with `JAVAPURS_HTTP_EXTERNAL=1`; the default suite is hermetic.

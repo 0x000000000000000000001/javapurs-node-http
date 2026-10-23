@@ -66,57 +66,53 @@
                 java.net.Socket connection = new java.net.Socket();
                 connection.connect(new java.net.InetSocketAddress(host, port), 10000);
                 connection.setSoTimeout(15000);
-                java.io.OutputStream out = connection.getOutputStream();
-                StringBuilder head = new StringBuilder();
-                head.append(method).append(' ').append(path).append(" HTTP/1.1\r\n");
-                head.append("Host: ").append(host).append(':').append(port).append("\r\n");
-                boolean hasConnection = false;
-                for (java.util.Map.Entry<String, Object> entry : headers.entrySet()) {
-                    head.append(entry.getKey()).append(": ").append(entry.getValue()).append("\r\n");
-                    if (entry.getKey().equalsIgnoreCase("connection")) hasConnection = true;
-                }
-                head.append("Content-Length: ").append(data.length).append("\r\n");
-                if (!hasConnection) head.append("Connection: close\r\n");
-                head.append("\r\n");
-                out.write(head.toString().getBytes(java.nio.charset.StandardCharsets.ISO_8859_1));
-                out.write(data);
-                out.flush();
-
-                java.io.InputStream in = connection.getInputStream();
-                String statusLine = __readLine(in);
-                IncomingMessageValue response = new IncomingMessageValue();
-                if (statusLine != null) {
-                    String[] parts = statusLine.split(" ", 3);
-                    if (parts.length > 1) response.statusCode = Integer.parseInt(parts[1].trim());
-                    if (parts.length > 2) response.statusMessage = parts[2].trim();
-                }
-                String line;
-                int contentLength = -1;
-                while ((line = __readLine(in)) != null && !line.isEmpty()) {
-                    int colon = line.indexOf(':');
-                    if (colon > 0) {
-                        String name = line.substring(0, colon).trim().toLowerCase();
-                        String value = line.substring(colon + 1).trim();
-                        response.headers.put(name, value);
-                        if (name.equals("content-length")) contentLength = Integer.parseInt(value);
-                    }
-                }
-                __M$Node_Net_Socket.TcpSocket responseSocket = new __M$Node_Net_Socket.TcpSocket();
-                responseSocket.socket = connection;
-                responseSocket.connected = true;
-                response.socket = responseSocket;
-                boolean upgraded = response.statusCode == 101 ||
-                    response.headers.keySet().stream().anyMatch(name -> name.equalsIgnoreCase("upgrade"));
-                if (!upgraded) {
-                    response.data = contentLength >= 0
-                        ? in.readNBytes(contentLength)
-                        : in.readAllBytes();
-                    connection.close();
-                }
-                fire("response", response);
+                writeRequest(connection.getOutputStream());
+                fire("response", readResponse(connection));
             } catch (Throwable failure) {
                 fire("error", new RuntimeException(String.valueOf(failure)));
             }
+        }
+
+        private void writeRequest(java.io.OutputStream output) throws java.io.IOException {
+            StringBuilder head = new StringBuilder();
+            head.append(method).append(' ').append(path).append(" HTTP/1.1\r\n");
+            head.append("Host: ").append(host).append(':').append(port).append("\r\n");
+            boolean hasConnection = false;
+            for (java.util.Map.Entry<String, Object> entry : headers.entrySet()) {
+                head.append(entry.getKey()).append(": ").append(entry.getValue()).append("\r\n");
+                if (entry.getKey().equalsIgnoreCase("connection")) hasConnection = true;
+            }
+            head.append("Content-Length: ").append(data.length).append("\r\n");
+            if (!hasConnection) head.append("Connection: close\r\n");
+            head.append("\r\n");
+            output.write(head.toString().getBytes(java.nio.charset.StandardCharsets.ISO_8859_1));
+            output.write(data);
+            output.flush();
+        }
+
+        private IncomingMessageValue readResponse(java.net.Socket connection) throws java.io.IOException {
+            java.io.InputStream input = connection.getInputStream();
+            String statusLine = __readLine(input);
+            IncomingMessageValue response = new IncomingMessageValue();
+            if (statusLine != null) {
+                String[] parts = statusLine.split(" ", 3);
+                if (parts.length > 1) response.statusCode = Integer.parseInt(parts[1].trim());
+                if (parts.length > 2) response.statusMessage = parts[2].trim();
+            }
+            int contentLength = __readHeaders(input, response.headers, -1);
+            __M$Node_Net_Socket.TcpSocket responseSocket = new __M$Node_Net_Socket.TcpSocket();
+            responseSocket.socket = connection;
+            responseSocket.connected = true;
+            response.socket = responseSocket;
+            boolean upgraded = response.statusCode == 101 ||
+                response.headers.keySet().stream().anyMatch(name -> name.equalsIgnoreCase("upgrade"));
+            if (!upgraded) {
+                response.data = contentLength >= 0
+                    ? input.readNBytes(contentLength)
+                    : input.readAllBytes();
+                connection.close();
+            }
+            return response;
         }
     }
 
@@ -138,17 +134,7 @@
                     request.method = parts.length > 0 ? parts[0] : "GET";
                     request.url = parts.length > 1 ? parts[1] : "/";
                     request.httpVersion = parts.length > 2 ? parts[2].replace("HTTP/", "") : "1.1";
-                    String line;
-                    int contentLength = 0;
-                    while ((line = __readLine(in)) != null && !line.isEmpty()) {
-                        int colon = line.indexOf(':');
-                        if (colon > 0) {
-                            String name = line.substring(0, colon).trim().toLowerCase();
-                            String value = line.substring(colon + 1).trim();
-                            request.headers.put(name, value);
-                            if (name.equals("content-length")) contentLength = Integer.parseInt(value);
-                        }
-                    }
+                    int contentLength = __readHeaders(in, request.headers, 0);
                     if (contentLength > 0) request.data = in.readNBytes(contentLength);
 
                     boolean upgrade = request.headers.containsKey("upgrade");
@@ -171,6 +157,23 @@
             handler.setDaemon(true);
             handler.start();
         }
+    }
+
+    // Requests without Content-Length have no body; responses use EOF instead.
+    private static int __readHeaders(java.io.InputStream input, java.util.Map<String, Object> headers,
+            int defaultContentLength) throws java.io.IOException {
+        int contentLength = defaultContentLength;
+        String line;
+        while ((line = __readLine(input)) != null && !line.isEmpty()) {
+            int colon = line.indexOf(':');
+            if (colon > 0) {
+                String name = line.substring(0, colon).trim().toLowerCase();
+                String value = line.substring(colon + 1).trim();
+                headers.put(name, value);
+                if (name.equals("content-length")) contentLength = Integer.parseInt(value);
+            }
+        }
+        return contentLength;
     }
 
     public static String __readLine(java.io.InputStream in) throws java.io.IOException {
